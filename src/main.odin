@@ -36,4 +36,6 @@ main :: proc() {
 	when AOC == "ALL" || AOC == "DAY03_2" do day_03_2()
 	when AOC == "ALL" || AOC == "DAY04_1" do day_04_1()
 	when AOC == "ALL" || AOC == "DAY04_2" do day_04_2()
+	when AOC == "ALL" || AOC == "DAY05_1" do day_05_1()
+	when AOC == "ALL" || AOC == "DAY05_2" do day_05_2()
 }
