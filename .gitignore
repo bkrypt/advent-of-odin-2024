@@ -3,3 +3,5 @@ inputs
 *.pdb
 *.rdi
 *.dll
+*.bin
+*.dSYM
