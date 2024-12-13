@@ -62,13 +62,19 @@ day_12_1 :: proc() {
 	}
 
 	directions := [4]Vec2{{0, -1}, {1, 0}, {0, 1}, {-1, 0}}
+	direction_fence_map := map[Vec2]Fence_Location {
+		directions[0] = .Top,
+		directions[1] = .Right,
+		directions[2] = .Bottom,
+		directions[3] = .Left,
+	}
 
 	visited_set := make([]bool, grid.grid_size)
 	defer delete(visited_set)
 
-	flood_queue: queue.Queue(Vec2)
-	queue.init(&flood_queue)
-	defer queue.destroy(&flood_queue)
+	seed_queue: queue.Queue(Vec2)
+	queue.init(&seed_queue)
+	defer queue.destroy(&seed_queue)
 
 	regions: [dynamic]Region
 	defer {
@@ -76,19 +82,44 @@ day_12_1 :: proc() {
 		delete(regions)
 	}
 
-	queue.push_back(&flood_queue, Vec2{0, 0})
-	for queue.len(flood_queue) > 0 {
-		seed_pos := queue.pop_back(&flood_queue)
+	queue.push_back(&seed_queue, Vec2{0, 0})
+	for queue.len(seed_queue) > 0 {
+		free_all(context.temp_allocator)
+
+		seed_pos := queue.pop_back(&seed_queue)
 		seed_index := grid_coord_to_index(grid, seed_pos)
 		seed_plant_type := grid.grid[seed_index]
 
 		region: Region
-                region.plant_type = seed_plant_type
+		region.plant_type = seed_plant_type
 		region.plots = make([dynamic]Plot)
 		append(&regions, region)
+
+		flood_queue: queue.Queue(Vec2)
+		queue.init(&flood_queue, queue.DEFAULT_CAPACITY, context.temp_allocator)
+		queue.push_back(&flood_queue, seed_pos)
+		for queue.len(flood_queue) > 0 {
+			plot_pos := queue.pop_front(&flood_queue)
+			plot_index := grid_coord_to_index(grid, plot_pos)
+			visited_set[plot_index] = true
+
+			plot: Plot
+
+			for dir_vector in directions {
+				neighbour_pos := plot_pos + dir_vector
+				fence_side := direction_fence_map[dir_vector]
+
+				if !grid_is_coord_in_bounds(grid, neighbour_pos) {
+					plot.fences |= {fence_side}
+					continue
+				}
+			}
+
+			append(&region.plots, plot)
+		}
 	}
 
-        fmt.println(regions)
+	fmt.println(regions)
 }
 
 grid_init :: proc(grid: ^Grid, width, height: u32) {
@@ -102,12 +133,16 @@ grid_destroy :: proc(grid: ^Grid) {
 	delete(grid.grid)
 }
 
-grid_coord_to_index :: proc(grid: Grid, coord: Vec2) -> u32 {
+grid_coord_to_index :: #force_inline proc(grid: Grid, coord: Vec2) -> u32 {
 	return u32(coord.y) * u32(grid.width) + u32(coord.x)
 }
 
-grid_index_to_coord :: proc(grid: Grid, index: u32) -> Vec2 {
+grid_index_to_coord :: #force_inline proc(grid: Grid, index: u32) -> Vec2 {
 	x := index % u32(grid.width)
 	y := index / u32(grid.width)
 	return Vec2{i32(x), i32(y)}
+}
+
+grid_is_coord_in_bounds :: #force_inline proc(grid: Grid, coord: Vec2) -> bool {
+	return coord.x >= 0 && u8(coord.x) < grid.width && coord.y >= 0 && u8(coord.y) < grid.height
 }
