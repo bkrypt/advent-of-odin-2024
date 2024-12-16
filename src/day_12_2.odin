@@ -22,6 +22,7 @@ Region :: struct {
 	plot_ids:   [dynamic]u32,
 	area:       u32,
 	perimeter:  u32,
+	sides:      u32,
 }
 
 Plot :: struct {
@@ -67,12 +68,18 @@ Perimeter_Tracker :: struct {
 	direction: Direction,
 }
 
+Walker :: struct {
+	direction:        Direction,
+	start_plot_index: u32,
+	current_fences:   Fence_Set,
+}
+
 @(private)
-day_12_1 :: proc() {
-	grid: Grid
+day_12_2 :: proc() {
+        grid: Grid
 	defer grid_destroy(&grid)
 	{
-		data, data_ok := os.read_entire_file("inputs/day_12.txt")
+		data, data_ok := os.read_entire_file("inputs/day_12_test.txt")
 		if !data_ok do panic("failed to load input")
 		defer delete(data)
 		if data[len(data) - 1] == '\n' {
@@ -149,6 +156,7 @@ day_12_1 :: proc() {
 				}
 			}
 			region_compute_spatial_measurements(&region, grid)
+                        region_compute_total_sides(&region, grid)
 			append(&regions, region)
 
 			free_all(context.temp_allocator)
@@ -157,9 +165,10 @@ day_12_1 :: proc() {
 
 	cost := u32(0)
 	for region in regions {
-		cost += region.area * region.perimeter
+		fmt.println(rune(region.plant_type), region.sides)
 	}
-	fmt.println("Day 12.1: ", cost)
+
+	fmt.println("Day 12.2: ", cost)
 }
 
 grid_init :: proc(grid: ^Grid, width, height: u32) {
@@ -192,4 +201,63 @@ region_compute_spatial_measurements :: proc(region: ^Region, grid: Grid) {
 	for plot_index in region.plot_ids {
 		region.perimeter += u32(card(grid.grid[plot_index].fences))
 	}
+}
+
+region_compute_total_sides :: proc(region: ^Region, grid: Grid) {
+        walker: Walker
+	walker.direction = .Right
+	walker.start_plot_index = region.plot_ids[0]
+
+        visited_set: map[u32]bool
+        defer delete(visited_set)
+
+        visit_queue: queue.Queue(u32)
+        queue.init(&visit_queue)
+        defer queue.destroy(&visit_queue)
+
+        queue.push_back(&visit_queue, walker.start_plot_index)
+	contour_loop: for queue.len(visit_queue) > 0 {
+                current_plot_index := queue.pop_back(&visit_queue)
+                plot := grid.grid[current_plot_index]
+                visited_set[plot.grid_index] = true
+
+                if card(plot.fences) == 0 {
+                        direction_turn_left(&walker.direction)
+                        neighbour_plot := grid.grid[plot.neighbour_ids[walker.direction]]
+                        queue.push_back(&visit_queue, neighbour_plot.grid_index)
+                        continue
+                }
+
+                fence_diff := plot.fences - walker.current_fences
+                walker.current_fences = plot.fences
+                region.sides += u32(card(fence_diff))
+
+                start_dir := walker.direction
+                for plot.neighbour_ids[walker.direction] == ~u32(0) || visited_set[plot.neighbour_ids[walker.direction]] {
+                        direction_turn_right(&walker.direction)
+                        if walker.direction == start_dir {
+                                break contour_loop
+                        }
+                }
+
+                queue.push_back(&visit_queue, plot.neighbour_ids[walker.direction])
+	}
+}
+
+direction_turn_left :: proc(direction: ^Direction) {
+        switch direction^ {
+        case .Up: direction^ = .Left
+        case .Left: direction^ = .Down
+        case .Down: direction^ = .Right
+        case .Right: direction^ = .Up
+        }
+}
+
+direction_turn_right :: proc(direction: ^Direction) {
+        switch direction^ {
+        case .Up: direction^ = .Right
+        case .Right: direction^ = .Down
+        case .Down: direction^ = .Left
+        case .Left: direction^ = .Up
+        }
 }
