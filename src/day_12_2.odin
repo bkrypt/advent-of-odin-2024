@@ -28,6 +28,8 @@ Region :: struct {
 Plot :: struct {
 	plant_type:    u8,
 	fences:        Fence_Set,
+	outer_fences:  Fence_Set,
+	inner_fences:  Fence_Set,
 	grid_index:    u32,
 	grid_position: Vec2,
 	neighbour_ids: [Direction]u32,
@@ -63,23 +65,32 @@ direction_fence_map := [Direction]Fence {
 	.Left  = Fence.Left,
 }
 
-Perimeter_Tracker :: struct {
-	position:  Vec2,
-	direction: Direction,
+fence_direction_map := [Fence]Direction {
+	.Top    = Direction.Up,
+	.Right  = Direction.Right,
+	.Bottom = Direction.Down,
+	.Left   = Direction.Left,
 }
 
-Walker :: struct {
-	direction:        Direction,
-	start_plot_index: u32,
-	current_fences:   Fence_Set,
+Edge_Walker :: struct {
+	mode:          Walker_Mode,
+	side:          Fence,
+	direction:     Direction,
+	index:         u32,
+	loop_complete: bool,
+}
+
+Walker_Mode :: enum (u8) {
+	Outside,
+	Inside,
 }
 
 @(private)
 day_12_2 :: proc() {
-        grid: Grid
+	grid: Grid
 	defer grid_destroy(&grid)
 	{
-		data, data_ok := os.read_entire_file("inputs/day_12_test.txt")
+		data, data_ok := os.read_entire_file("inputs/day_12.txt")
 		if !data_ok do panic("failed to load input")
 		defer delete(data)
 		if data[len(data) - 1] == '\n' {
@@ -156,7 +167,7 @@ day_12_2 :: proc() {
 				}
 			}
 			region_compute_spatial_measurements(&region, grid)
-                        region_compute_total_sides(&region, grid)
+			region_count_edges(&region, grid)
 			append(&regions, region)
 
 			free_all(context.temp_allocator)
@@ -165,6 +176,7 @@ day_12_2 :: proc() {
 
 	cost := u32(0)
 	for region in regions {
+		cost += region.sides * region.area
 		fmt.println(rune(region.plant_type), region.sides)
 	}
 
@@ -203,61 +215,206 @@ region_compute_spatial_measurements :: proc(region: ^Region, grid: Grid) {
 	}
 }
 
-region_compute_total_sides :: proc(region: ^Region, grid: Grid) {
-        walker: Walker
-	walker.direction = .Right
-	walker.start_plot_index = region.plot_ids[0]
+region_count_edges :: proc(region: ^Region, grid: Grid) {
+	visited_set: map[u32]bool
+	defer delete(visited_set)
 
-        visited_set: map[u32]bool
-        defer delete(visited_set)
+	walker: Edge_Walker
+	edge_walker_reset(&walker)
+	walker.mode = .Outside
 
-        visit_queue: queue.Queue(u32)
-        queue.init(&visit_queue)
-        defer queue.destroy(&visit_queue)
+	walker.index = region.plot_ids[0]
+	walker.direction = Direction.Right
 
-        queue.push_back(&visit_queue, walker.start_plot_index)
-	contour_loop: for queue.len(visit_queue) > 0 {
-                current_plot_index := queue.pop_back(&visit_queue)
-                plot := grid.grid[current_plot_index]
-                visited_set[plot.grid_index] = true
+	start_plot_index := walker.index
+	start_direction := walker.direction
 
-                if card(plot.fences) == 0 {
-                        direction_turn_left(&walker.direction)
-                        neighbour_plot := grid.grid[plot.neighbour_ids[walker.direction]]
-                        queue.push_back(&visit_queue, neighbour_plot.grid_index)
-                        continue
-                }
+	for !walker.loop_complete {
+		plot := &grid.grid[walker.index]
+		plot.outer_fences |= {walker.side}
 
-                fence_diff := plot.fences - walker.current_fences
-                walker.current_fences = plot.fences
-                region.sides += u32(card(fence_diff))
+		visited_set[plot.grid_index] = true
 
-                start_dir := walker.direction
-                for plot.neighbour_ids[walker.direction] == ~u32(0) || visited_set[plot.neighbour_ids[walker.direction]] {
-                        direction_turn_right(&walker.direction)
-                        if walker.direction == start_dir {
-                                break contour_loop
-                        }
-                }
+		turned_this_loop := false
+		if walker.side not_in plot.fences {
+			region.sides += 1
+			edge_walker_turn_to_side(&walker)
+			turned_this_loop = true
+		} else if plot.neighbour_ids[walker.direction] == ~u32(0) {
+			region.sides += 1
+			edge_walker_turn_right(&walker)
+			turned_this_loop = true
+		}
 
-                queue.push_back(&visit_queue, plot.neighbour_ids[walker.direction])
+		if turned_this_loop && walker.direction == start_direction && walker.index == start_plot_index {
+			walker.loop_complete = true
+		} else if plot.neighbour_ids[walker.direction] != ~u32(0) {
+			walker.index = plot.neighbour_ids[walker.direction]
+		}
+	}
+
+	hole_loop: for {
+		for plot_index in region.plot_ids {
+			plot := grid.grid[plot_index]
+			if card(plot.fences) > 0 && plot_index not_in visited_set {
+				edge_walker_reset(&walker)
+				walker.mode = .Inside
+				walker.index = plot_index
+				if Fence.Top in plot.fences {
+					walker.direction = .Left
+					walker.side = .Top
+				} else if Fence.Right in plot.fences {
+					walker.direction = .Up
+					walker.side = .Right
+				} else if Fence.Bottom in plot.fences {
+					walker.direction = .Right
+					walker.side = .Bottom
+				} else if Fence.Left in plot.fences {
+					walker.direction = .Down
+					walker.side = .Left
+				}
+				break
+			}
+		}
+
+		if walker.loop_complete {
+			break hole_loop
+		} else {
+			start_plot_index = walker.index
+			start_direction = walker.direction
+
+			for !walker.loop_complete {
+				plot := grid.grid[walker.index]
+				visited_set[plot.grid_index] = true
+
+				turned_this_loop := false
+				if walker.side not_in plot.fences {
+					region.sides += 1
+					edge_walker_turn_to_side(&walker)
+					turned_this_loop = true
+				} else if plot.neighbour_ids[walker.direction] == ~u32(0) {
+					region.sides += 1
+					if plot.neighbour_ids[fence_direction_map[walker.side]] == ~u32(0) {
+						edge_walker_turn_left(&walker)
+					} else {
+						edge_walker_turn_right(&walker)
+					}
+					turned_this_loop = true
+				}
+
+				if turned_this_loop &&
+				   walker.direction == start_direction &&
+				   walker.index == start_plot_index {
+					walker.loop_complete = true
+				} else if plot.neighbour_ids[walker.direction] != ~u32(0) {
+					walker.index = plot.neighbour_ids[walker.direction]
+
+					if walker.direction == start_direction && walker.index == start_plot_index {
+						walker.loop_complete = true
+					}
+				}
+
+				fmt.println(plot)
+				fmt.println(walker)
+				fmt.print("start index:", start_plot_index, "start dir:", start_direction)
+				fmt.println()
+			}
+		}
 	}
 }
 
-direction_turn_left :: proc(direction: ^Direction) {
-        switch direction^ {
-        case .Up: direction^ = .Left
-        case .Left: direction^ = .Down
-        case .Down: direction^ = .Right
-        case .Right: direction^ = .Up
-        }
+edge_walker_reset :: proc(walker: ^Edge_Walker) {
+	walker.mode = .Outside
+	walker.direction = .Right
+	walker.side = .Top
+	walker.index = ~u32(0)
+	walker.loop_complete = false
 }
 
-direction_turn_right :: proc(direction: ^Direction) {
-        switch direction^ {
-        case .Up: direction^ = .Right
-        case .Right: direction^ = .Down
-        case .Down: direction^ = .Left
-        case .Left: direction^ = .Up
-        }
+edge_walker_turn_to_side :: proc(walker: ^Edge_Walker) {
+	walker.direction = fence_direction_map[walker.side]
+	switch walker.mode {
+	case .Outside:
+		switch walker.direction {
+		case .Up: walker.side = .Left
+		case .Right: walker.side = .Top
+		case .Down: walker.side = .Right
+		case .Left: walker.side = .Bottom
+		}
+	case .Inside:
+		switch walker.direction {
+		case .Up: walker.side = .Right
+		case .Right: walker.side = .Bottom
+		case .Down: walker.side = .Left
+		case .Left: walker.side = .Top
+		}
+	}
+}
+
+edge_walker_turn_right :: proc(walker: ^Edge_Walker) {
+	switch walker.mode {
+	case .Outside:
+		switch walker.direction {
+		case .Up:
+			walker.direction = .Right
+			walker.side = .Top
+		case .Right:
+			walker.direction = .Down
+			walker.side = .Right
+		case .Down:
+			walker.direction = .Left
+			walker.side = .Bottom
+		case .Left:
+			walker.direction = .Up
+			walker.side = .Left
+		}
+	case .Inside:
+		switch walker.direction {
+		case .Up:
+			walker.direction = .Right
+			walker.side = .Bottom
+		case .Right:
+			walker.direction = .Down
+			walker.side = .Left
+		case .Down:
+			walker.direction = .Left
+			walker.side = .Top
+		case .Left:
+			walker.direction = .Up
+			walker.side = .Right
+		}
+	}
+}
+
+edge_walker_turn_left :: proc(walker: ^Edge_Walker) {
+	if walker.mode == .Outside {
+		panic("walker should never turn left in Outside mode")
+	}
+	switch walker.direction {
+	case .Up:
+		walker.direction = .Left
+		walker.side = .Top
+	case .Right:
+		walker.direction = .Up
+		walker.side = .Right
+	case .Down:
+		walker.direction = .Right
+		walker.side = .Bottom
+	case .Left:
+		walker.direction = .Down
+		walker.side = .Left
+	}
+}
+
+fence_set_first_set_fence :: proc(fences: Fence_Set) -> (fence: Fence) {
+	if Fence.Top in fences {
+		fence = .Top
+	} else if Fence.Right in fences {
+		fence = .Right
+	} else if Fence.Bottom in fences {
+		fence = .Bottom
+	} else if Fence.Left in fences {
+		fence = .Left
+	}
+	return
 }
