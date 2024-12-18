@@ -175,9 +175,9 @@ day_12_2 :: proc() {
 	}
 
 	cost := u32(0)
+
 	for region in regions {
 		cost += region.sides * region.area
-		fmt.println(rune(region.plant_type), region.sides)
 	}
 
 	fmt.println("Day 12.2: ", cost)
@@ -229,10 +229,8 @@ region_count_edges :: proc(region: ^Region, grid: Grid) {
 	start_plot_index := walker.index
 	start_direction := walker.direction
 
-	for !walker.loop_complete {
+	perimeter_loop: for !walker.loop_complete {
 		plot := &grid.grid[walker.index]
-		plot.outer_fences |= {walker.side}
-
 		visited_set[plot.grid_index] = true
 
 		turned_this_loop := false
@@ -242,6 +240,7 @@ region_count_edges :: proc(region: ^Region, grid: Grid) {
 			turned_this_loop = true
 		} else if plot.neighbour_ids[walker.direction] == ~u32(0) {
 			region.sides += 1
+			plot.outer_fences |= {walker.side}
 			edge_walker_turn_right(&walker)
 			turned_this_loop = true
 		}
@@ -249,48 +248,40 @@ region_count_edges :: proc(region: ^Region, grid: Grid) {
 		if turned_this_loop && walker.direction == start_direction && walker.index == start_plot_index {
 			walker.loop_complete = true
 		} else if plot.neighbour_ids[walker.direction] != ~u32(0) {
+			if walker.side in plot.fences {
+				plot.outer_fences |= {walker.side}
+			}
 			walker.index = plot.neighbour_ids[walker.direction]
 		}
 	}
 
-	hole_loop: for {
-		for plot_index in region.plot_ids {
-			plot := grid.grid[plot_index]
-			if card(plot.fences) > 0 && plot_index not_in visited_set {
-				edge_walker_reset(&walker)
-				walker.mode = .Inside
-				walker.index = plot_index
-				if Fence.Top in plot.fences {
-					walker.direction = .Left
-					walker.side = .Top
-				} else if Fence.Right in plot.fences {
-					walker.direction = .Up
-					walker.side = .Right
-				} else if Fence.Bottom in plot.fences {
-					walker.direction = .Right
-					walker.side = .Bottom
-				} else if Fence.Left in plot.fences {
-					walker.direction = .Down
-					walker.side = .Left
-				}
-				break
+	hole_loop: for plot_index in region.plot_ids {
+		plot := grid.grid[plot_index]
+		if card(plot.fences) > 0 && plot.outer_fences != plot.fences && plot.inner_fences == {} {
+			edge_walker_reset(&walker)
+			walker.mode = .Inside
+			walker.index = plot_index
+			walker.side = fence_set_first_set_fence(plot.fences - plot.outer_fences)
+			switch walker.side {
+			case .Top: walker.direction = .Left
+			case .Right: walker.direction = .Up
+			case .Bottom: walker.direction = .Right
+			case .Left: walker.direction = .Down
 			}
-		}
-
-		if walker.loop_complete {
-			break hole_loop
-		} else {
 			start_plot_index = walker.index
 			start_direction = walker.direction
 
 			for !walker.loop_complete {
-				plot := grid.grid[walker.index]
+				plot := &grid.grid[walker.index]
+				plot.inner_fences |= {walker.side}
+
 				visited_set[plot.grid_index] = true
 
 				turned_this_loop := false
 				if walker.side not_in plot.fences {
 					region.sides += 1
 					edge_walker_turn_to_side(&walker)
+					plot.inner_fences |= {walker.side}
 					turned_this_loop = true
 				} else if plot.neighbour_ids[walker.direction] == ~u32(0) {
 					region.sides += 1
@@ -299,6 +290,7 @@ region_count_edges :: proc(region: ^Region, grid: Grid) {
 					} else {
 						edge_walker_turn_right(&walker)
 					}
+					plot.inner_fences |= {walker.side}
 					turned_this_loop = true
 				}
 
@@ -313,11 +305,6 @@ region_count_edges :: proc(region: ^Region, grid: Grid) {
 						walker.loop_complete = true
 					}
 				}
-
-				fmt.println(plot)
-				fmt.println(walker)
-				fmt.print("start index:", start_plot_index, "start dir:", start_direction)
-				fmt.println()
 			}
 		}
 	}
